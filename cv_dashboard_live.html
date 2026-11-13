@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Monthly %CV vs Cumulative %CV Dashboard (Live)</title>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f1f5fb;--card:#fff;--ink:#14213d;--mute:#64748b;--line:#e2e8f0;--bar:#5b8def;--cum:#f97316;--bad:#ef4444;--ok:#16a34a;--acc:#4f46e5;--grid:rgba(100,116,139,.18)}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1424;--card:#16203a;--ink:#e8eefc;--mute:#97a6c4;--line:#27345a;--bar:#6fa0ff;--cum:#fb923c;--bad:#f87171;--ok:#4ade80;--acc:#818cf8;--grid:rgba(151,166,196,.16)}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Sarabun',system-ui,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:20px 16px 32px}
+header{background:linear-gradient(120deg,#4f46e5,#2563eb 60%,#0ea5e9);color:#fff;border-radius:18px;padding:22px 24px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center}
+h1{margin:0 0 4px;font-size:1.5rem;font-weight:700}header p{margin:0;opacity:.9;font-size:.95rem}
+.status{background:rgba(255,255,255,.18);border-radius:12px;padding:8px 14px;font-size:.82rem;text-align:right}
+.status button{font:inherit;font-size:.8rem;margin-top:6px;border:0;border-radius:8px;padding:4px 12px;cursor:pointer;background:#fff;color:#2563eb;font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 4px 18px rgba(20,33,61,.06)}
+.filters{display:flex;flex-wrap:wrap;gap:18px;margin-bottom:16px}
+.fg{display:flex;flex-direction:column;gap:6px}.fg label{font-size:.75rem;color:var(--mute);font-weight:600;letter-spacing:.04em}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button,select{font:inherit;font-size:.9rem;border:1px solid var(--line);background:var(--bg);color:var(--ink);padding:7px 14px;border-radius:999px;cursor:pointer;transition:.15s}
+.seg button:hover{border-color:var(--acc)}
+.seg button.on{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+select{border-radius:10px;min-width:170px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.kpi small{color:var(--mute);font-size:.78rem}.kpi b{display:block;font-size:1.7rem;margin-top:2px}.kpi span{font-size:.78rem;color:var(--mute)}
+.chartbox{position:relative;height:420px}
+.note{margin-top:12px;font-size:.8rem;color:var(--mute)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 4px 0 10px}
+#msg{display:none;margin-bottom:12px;padding:10px 14px;border-radius:12px;background:rgba(239,68,68,.12);color:var(--bad);font-size:.85rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div><h1>Monthly %CV vs Cumulative %CV</h1><p>เปรียบเทียบ %CV รายเดือน กับ Cumulative %CV (×2) ของ Control Lot เดียวกัน</p></div>
+  <div class="status"><div id="stat">กำลังโหลด…</div><button id="btnRefresh">รีเฟรชตอนนี้</button></div>
+</header>
+<div id="msg"></div>
+
+<div class="card filters">
+  <div class="fg"><label>PARAMETER</label><div class="seg" id="fParam"></div></div>
+  <div class="fg"><label>LEVEL</label><div class="seg" id="fLevel"></div></div>
+  <div class="fg"><label>CONTROL LOT</label><select id="fLot"></select></div>
+</div>
+
+<div class="kpis">
+  <div class="card kpi"><small>%CV รายเดือนล่าสุด</small><b id="k1">-</b><span id="k1s"></span></div>
+  <div class="card kpi"><small>Cumulative %CV × 2 (ล็อตล่าสุด)</small><b id="k2">-</b><span id="k2s"></span></div>
+  <div class="card kpi"><small>ค่าเฉลี่ย Monthly %CV</small><b id="k3">-</b><span>ตามตัวกรองที่เลือก</span></div>
+  <div class="card kpi"><small>เดือนที่เกินเส้น ×2</small><b id="k4">-</b><span id="k4s"></span></div>
+</div>
+
+<div class="card">
+  <div id="ttl" style="font-weight:600;margin-bottom:8px"></div>
+  <div class="chartbox"><canvas id="chart"></canvas></div>
+  <div class="note"><span class="dot" style="background:var(--bar)"></span>Monthly %CV (แท่ง)<span class="dot" style="background:var(--cum)"></span>Cumulative %CV × 2 (เส้น)<span class="dot" style="background:var(--bad)"></span>แท่งสีแดง = เกินเส้น Cumulative ×2</div>
+</div>
+</div>
+
+<script>
+/* ===== ตั้งค่า ===== */
+const SHEET_ID  = "1pgnX51uZVlM4WWuNdwiyJRo-n4MJDDVBXFvWvvvv1AM";
+const GID       = "0";            // gid ของแท็บ "ชีต1" (ดูได้จาก URL ท้าย #gid=...)
+const REFRESH_MS = 5 * 60 * 1000; // รีเฟรชอัตโนมัติทุก 5 นาที (0 = ปิด)
+const CUM_FACTOR = 2;             // ตัวคูณเส้น Cumulative %CV
+/* ==================== */
+
+const LEVELS=["Low","Medium","High"];
+let DATA=null, PARAMS=[], st={p:null,l:"Medium",lot:"ALL"}, chart;
+const $=id=>document.getElementById(id), css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---------- ข้อมูลสำรอง (ใช้เมื่อดึงจากชีตไม่ได้) ---------- */
+function snapshot(){
+  const P=["WBC-N","RBC","HGB","HCT","PLT"];
+  const C={MB0126:[[2.3,1.5,1],[1.8,1.5,1.5],[1.2,1,1],[2.3,1.6,1.4],[7.1,3,2.4]],MB0326:[[2.8,1.5,1.4],[1.4,1.2,.8],[1.1,.9,.7],[2.1,1.4,1.3],[5.4,2.6,2.1]],MB0526:[[2.2,1.4,1.2],[1.7,1.8,1.5],[1,1.2,.8],[1.4,1.6,1.3],[5.5,2.6,2]],MB0726:[[2.1,1.7,1.8],[1.1,1.1,1],[1.3,1.1,.9],[1.9,1.6,1.4],[6.2,2.5,1.9]],MB0926:[[2.7,1.8,.8],[1.3,1.2,1],[.9,.9,.8],[1.7,1.5,1.3],[5.3,2.9,2]]};
+  const J=[2.40,1.46,0.98,1.95,1.29,1.42,1.11,1.05,0.88,1.82,1.25,1.34,5.65,2.38,2.22];
+  const R=[["Jan 26","MB0126",[2.02,1.48,1.06,1.41,1.20,1.05,1.06,1.16,0.89,1.69,1.32,1.33,5.99,3.23,1.90]],["Feb 26","MB0126",[2.27,1.41,1.45,1.72,1.41,2.39,1.17,0.91,1.78,1.89,1.37,2.34,7.16,3.06,2.47]],["Mar 26","MB0126",[2.31,1.46,1.68,1.83,1.47,2.78,1.21,0.96,1.96,2.32,1.58,2.91,7.10,3.00,2.42]],["Mar 26","MB0326",[2.06,1.38,1.41,1.65,0.92,0.98,1.28,0.76,0.82,1.87,0.99,1.18,4.21,2.50,2.35]],["Apr 26","MB0326",[2.91,1.43,1.48,1.46,1.12,0.82,1.07,0.86,0.72,2.16,1.41,1.24,5.50,2.60,2.00]],["May 26","MB0326",[2.83,1.49,1.43,1.39,1.16,0.80,1.04,0.88,0.70,2.19,1.44,1.33,5.37,2.61,2.06]],["May 26","MB0526",[2.57,1.55,0.98,1.95,1.20,1.29,1.13,0.95,0.83,1.81,1.06,1.27,4.62,2.42,2.30]],["Jun 26","MB0526",J],["Jul 26","MB0526",J],["Jul 26","MB0726",[2.21,1.72,1.38,1.02,0.79,1.01,1.00,0.80,1.00,1.24,0.96,1.05,5.25,2.05,1.67]],["Aug 26","MB0726",J],["Sep 26","MB0726",[2.10,1.68,1.82,1.13,1.13,0.97,1.29,1.06,0.89,1.88,1.63,1.42,6.17,2.50,1.87]],["Sep 26","MB0926",[2.42,1.67,0.70,1.10,1.09,0.91,0.67,0.86,0.63,1.27,1.23,0.92,4.57,2.28,2.18]]];
+  const cum={},lots=[];
+  for(const l in C){lots.push(l);cum[l]={};P.forEach((p,i)=>{cum[l][p]={};LEVELS.forEach((lv,j)=>cum[l][p][lv]=C[l][i][j])})}
+  const months=R.map(([m,lot,v])=>{const o={};P.forEach((p,i)=>{o[p]={};LEVELS.forEach((lv,j)=>o[p][lv]=v[i*3+j])});return{m,lot,v:o}});
+  return{params:P,lots,cum,months};
+}
+
+/* ---------- อ่านและแปลง CSV ---------- */
+function parseCSV(t){
+  const rows=[];let r=[],c="",q=false;
+  for(let i=0;i<t.length;i++){const ch=t[i];
+    if(q){if(ch==='"'){if(t[i+1]==='"'){c+='"';i++}else q=false}else c+=ch}
+    else if(ch==='"')q=true;
+    else if(ch===','){r.push(c);c=""}
+    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;r.push(c);rows.push(r);r=[];c=""}
+    else c+=ch}
+  if(c!==""||r.length){r.push(c);rows.push(r)}
+  return rows;
+}
+const num=s=>{const v=parseFloat(String(s??"").replace(/[%,\s]/g,""));return isNaN(v)?null:v};
+function fmtMonth(s){s=(s||"").trim();const m=s.match(/^([A-Za-z]{3})[A-Za-z]*[\s\-\/]+(\d{4}|\d{2})$/);return m?m[1]+" "+m[2].slice(-2):s}
+
+function buildData(rows){
+  const H=rows[0].map(x=>(x||"").trim());
+  const cumCol={}, monCol=[], params=[];
+  let colMonth=-1,colLot=-1,colLevel=-1,colCtl=-1;
+  H.forEach((h,i)=>{
+    let m;
+    if(h==="Lot Control")colCtl=i; else if(h==="Level")colLevel=i;
+    else if(h==="mm/yy")colMonth=i; else if(h==="Lot No.")colLot=i;
+    else if((m=h.match(/^Cumulative CV\s+(.+)$/i)))cumCol[m[1].trim()]=i;
+    else if((m=h.match(/^Monthly CV\s+(.+?)\s*\/\s*(Low|Medium|High)$/i))){
+      const p=m[1].trim(), lv=LEVELS.find(x=>x.toLowerCase()===m[2].toLowerCase());
+      monCol.push({p,lv,i}); if(!params.includes(p))params.push(p)}
+  });
+  if(colMonth<0||colLot<0||colCtl<0||colLevel<0||!monCol.length)throw new Error("โครงสร้างหัวตารางไม่ตรงกับที่คาดไว้");
+  const cum={},lots=[],months=[];let cur=null;
+  for(let r=1;r<rows.length;r++){
+    const row=rows[r];
+    // ตาราง Cumulative CV (ซ้าย)
+    const ctl=(row[colCtl]||"").trim();
+    if(ctl){cur=ctl;if(!cum[cur]){cum[cur]={};lots.push(cur)}}
+    const lv=LEVELS.find(x=>x.toLowerCase()===(row[colLevel]||"").trim().toLowerCase());
+    if(cur&&lv){for(const p in cumCol){const v=num(row[cumCol[p]]);if(v!==null){(cum[cur][p]=cum[cur][p]||{})[lv]=v}}}
+    // ตาราง Monthly CV (ขวา)
+    const mm=(row[colMonth]||"").trim(), lot=(row[colLot]||"").trim();
+    if(mm&&lot&&!/average/i.test(mm)){
+      const v={};params.forEach(p=>v[p]={});
+      monCol.forEach(({p,lv,i})=>{v[p][lv]=num(row[i])});
+      months.push({m:fmtMonth(mm),lot,v});
+    }
+  }
+  if(!months.length)throw new Error("ไม่พบข้อมูล Monthly CV");
+  return{params,lots:lots.filter(l=>months.some(x=>x.lot===l)||true),cum,months};
+}
+
+/* ---------- โหลดข้อมูล ---------- */
+async function fetchSheet(){
+  const urls=[
+    `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${GID}&_=${Date.now()}`,
+    `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${GID}&_=${Date.now()}`];
+  let err;
+  for(const u of urls){try{const r=await fetch(u,{cache:"no-store"});if(!r.ok)throw new Error("HTTP "+r.status);return buildData(parseCSV(await r.text()))}catch(e){err=e}}
+  throw err;
+}
+async function load(){
+  $("btnRefresh").disabled=true;
+  try{
+    DATA=await fetchSheet();
+    $("msg").style.display="none";
+    $("stat").innerHTML=`<span style="color:#86efac">●</span> เชื่อมต่อ Google Sheet · อัปเดต ${new Date().toLocaleTimeString("th-TH")}`;
+  }catch(e){
+    if(!DATA)DATA=snapshot();
+    $("msg").style.display="block";
+    $("msg").textContent=`ดึงข้อมูลจาก Google Sheet ไม่สำเร็จ (${e.message}) – กำลังแสดงข้อมูลสำรอง ตรวจสอบว่าชีตแชร์แบบ "ทุกคนที่มีลิงก์" และ GID ถูกต้อง`;
+    $("stat").innerHTML=`<span style="color:#fca5a5">●</span> ใช้ข้อมูลสำรอง`;
+  }
+  $("btnRefresh").disabled=false;
+  PARAMS=DATA.params;
+  if(!PARAMS.includes(st.p))st.p=PARAMS[0];
+  if(st.lot!=="ALL"&&!DATA.lots.includes(st.lot))st.lot="ALL";
+  const sel=$("fLot");
+  sel.innerHTML='<option value="ALL">ทุกล็อต (All lots)</option>'+DATA.lots.map(l=>`<option value="${l}">${l}</option>`).join("");
+  sel.value=st.lot;
+  render();
+}
+
+/* ---------- แสดงผล ---------- */
+function seg(el,items,key){el.innerHTML="";items.forEach(t=>{const b=document.createElement("button");b.textContent=t;b.className=st[key]===t?"on":"";b.onclick=()=>{st[key]=t;render()};el.appendChild(b)})}
+$("fLot").onchange=e=>{st.lot=e.target.value;render()};
+$("btnRefresh").onclick=load;
+
+function render(){
+  if(!DATA)return;
+  seg($("fParam"),PARAMS,"p");seg($("fLevel"),LEVELS,"l");
+  const rows=DATA.months.filter(r=>(st.lot==="ALL"||r.lot===st.lot)&&r.v[st.p]&&r.v[st.p][st.l]!=null);
+  if(!rows.length){if(chart)chart.destroy();$("ttl").textContent="ไม่มีข้อมูลตามตัวกรองที่เลือก";return}
+  const labels=rows.map(r=>st.lot==="ALL"?[r.m,r.lot]:r.m);
+  const monthly=rows.map(r=>r.v[st.p][st.l]);
+  const lim=rows.map(r=>{const c=(DATA.cum[r.lot]||{})[st.p];const v=c?c[st.l]:null;return v==null?null:+(v*CUM_FACTOR).toFixed(2)});
+  const bar=css("--bar"),bad=css("--bad"),cum=css("--cum"),ink=css("--mute"),grid=css("--grid");
+  $("ttl").textContent=`${st.p} · ${st.l} · ${st.lot==="ALL"?"ทุกล็อต":"Lot "+st.lot}`;
+  const isOver=(v,i)=>lim[i]!=null&&v>lim[i];
+  const over=monthly.filter(isOver).length, last=rows.length-1;
+  $("k1").textContent=monthly[last].toFixed(2)+"%";$("k1s").textContent=`${rows[last].m} · ${rows[last].lot}`;
+  $("k2").textContent=lim[last]!=null?lim[last].toFixed(2)+"%":"-";$("k2s").textContent=lim[last]!=null?`Cumulative ${(lim[last]/CUM_FACTOR).toFixed(2)}% × ${CUM_FACTOR}`:"ยังไม่มีค่า Cumulative";
+  $("k3").textContent=(monthly.reduce((a,b)=>a+b,0)/monthly.length).toFixed(2)+"%";
+  $("k4").textContent=`${over} / ${rows.length}`;$("k4s").textContent=over?"ควรทบทวนผล QC":"ทุกเดือนอยู่ในเกณฑ์";
+  if(chart)chart.destroy();
+  chart=new Chart($("chart"),{data:{labels,datasets:[
+    {type:"line",label:`Cumulative %CV × ${CUM_FACTOR}`,data:lim,borderColor:cum,backgroundColor:cum,borderWidth:3.5,tension:.45,cubicInterpolationMode:"monotone",pointRadius:4,pointHoverRadius:6,pointBackgroundColor:"#fff",pointBorderColor:cum,pointBorderWidth:2,order:0},
+    {type:"bar",label:"Monthly %CV",data:monthly,backgroundColor:monthly.map((v,i)=>isOver(v,i)?bad:bar),borderRadius:8,maxBarThickness:46,order:1}]},
+  options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
+    plugins:{legend:{labels:{color:ink,usePointStyle:true,font:{family:"Sarabun"}}},
+      tooltip:{callbacks:{label:c=>c.parsed.y==null?"":` ${c.dataset.label}: ${c.parsed.y.toFixed(2)}%`,afterBody:i=>isOver(monthly[i[0].dataIndex],i[0].dataIndex)?"⚠ เกิน Cumulative ×"+CUM_FACTOR:""}}},
+    scales:{x:{grid:{display:false},ticks:{color:ink,font:{family:"Sarabun"}}},
+      y:{beginAtZero:true,grace:"10%",title:{display:true,text:"%CV",color:ink},grid:{color:grid},ticks:{color:ink,callback:v=>v+"%"}}}}});
+}
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change",render);
+load();
+if(REFRESH_MS>0)setInterval(load,REFRESH_MS);
+</script>
+</body>
+</html>
